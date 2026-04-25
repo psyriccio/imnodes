@@ -255,7 +255,7 @@ inline bool RectangleOverlapsLink(
 
 inline ImVec2 ScreenSpaceToGridSpace(const ImNodesEditorContext& editor, const ImVec2& v)
 {
-    return v - GImNodes->CanvasOriginScreenSpace - editor.Panning;
+    return (v - GImNodes->CanvasOriginScreenSpace - editor.Panning) / editor.Zoom;
 }
 
 inline ImRect ScreenSpaceToGridSpace(const ImNodesEditorContext& editor, const ImRect& r)
@@ -265,17 +265,17 @@ inline ImRect ScreenSpaceToGridSpace(const ImNodesEditorContext& editor, const I
 
 inline ImVec2 GridSpaceToScreenSpace(const ImNodesEditorContext& editor, const ImVec2& v)
 {
-    return v + GImNodes->CanvasOriginScreenSpace + editor.Panning;
+    return v * editor.Zoom + GImNodes->CanvasOriginScreenSpace + editor.Panning;
 }
 
 inline ImVec2 GridSpaceToEditorSpace(const ImNodesEditorContext& editor, const ImVec2& v)
 {
-    return v + editor.Panning;
+    return v * editor.Zoom + editor.Panning;
 }
 
 inline ImVec2 EditorSpaceToGridSpace(const ImNodesEditorContext& editor, const ImVec2& v)
 {
-    return v - editor.Panning;
+    return (v - editor.Panning) / editor.Zoom;
 }
 
 inline ImVec2 EditorSpaceToScreenSpace(const ImVec2& v)
@@ -622,7 +622,7 @@ void BeginNodeSelection(ImNodesEditorContext& editor, const int node_idx)
     // each node in the selection to the origin of the dragged node.
     const ImVec2 ref_origin = editor.Nodes.Pool[node_idx].Origin;
     editor.PrimaryNodeOffset =
-        ref_origin + GImNodes->CanvasOriginScreenSpace + editor.Panning - GImNodes->MousePos;
+        ref_origin - ScreenSpaceToGridSpace(editor, GImNodes->MousePos);
 
     editor.SelectedNodeOffsets.clear();
     for (int idx = 0; idx < editor.SelectedNodeIndices.Size; idx++)
@@ -834,7 +834,7 @@ void TranslateSelectedNodes(ImNodesEditorContext& editor)
                                          : true;
 
         const ImVec2 origin = SnapOriginToGrid(
-            GImNodes->MousePos - GImNodes->CanvasOriginScreenSpace - editor.Panning +
+            ScreenSpaceToGridSpace(editor, GImNodes->MousePos) +
             editor.PrimaryNodeOffset);
         for (int i = 0; i < editor.SelectedNodeIndices.size(); ++i)
         {
@@ -1328,13 +1328,17 @@ inline ImRect GetNodeTitleRect(const ImNodeData& node)
 
 void DrawGrid(ImNodesEditorContext& editor, const ImVec2& canvas_size)
 {
+    const float scaled_spacing = GImNodes->Style.GridSpacing * editor.Zoom;
+    if (scaled_spacing < 4.0f)
+        return; // too dense to draw
+
     const ImVec2 offset = editor.Panning;
     ImU32        line_color = GImNodes->Style.Colors[ImNodesCol_GridLine];
     ImU32        line_color_prim = GImNodes->Style.Colors[ImNodesCol_GridLinePrimary];
     bool         draw_primary = GImNodes->Style.Flags & ImNodesStyleFlags_GridLinesPrimary;
 
-    for (float x = fmodf(offset.x, GImNodes->Style.GridSpacing); x < canvas_size.x;
-         x += GImNodes->Style.GridSpacing)
+    for (float x = fmodf(offset.x, scaled_spacing); x < canvas_size.x;
+         x += scaled_spacing)
     {
         GImNodes->CanvasDrawList->AddLine(
             EditorSpaceToScreenSpace(ImVec2(x, 0.0f)),
@@ -1342,8 +1346,8 @@ void DrawGrid(ImNodesEditorContext& editor, const ImVec2& canvas_size)
             offset.x - x == 0.f && draw_primary ? line_color_prim : line_color);
     }
 
-    for (float y = fmodf(offset.y, GImNodes->Style.GridSpacing); y < canvas_size.y;
-         y += GImNodes->Style.GridSpacing)
+    for (float y = fmodf(offset.y, scaled_spacing); y < canvas_size.y;
+         y += scaled_spacing)
     {
         GImNodes->CanvasDrawList->AddLine(
             EditorSpaceToScreenSpace(ImVec2(0.0f, y)),
@@ -1498,7 +1502,7 @@ void DrawPin(ImNodesEditorContext& editor, const int pin_idx)
 void DrawNode(ImNodesEditorContext& editor, const int node_idx)
 {
     const ImNodeData& node = editor.Nodes.Pool[node_idx];
-    ImGui::SetCursorPos(node.Origin + editor.Panning);
+    ImGui::SetCursorPos(GridSpaceToEditorSpace(editor, node.Origin));
 
     const bool node_hovered =
         GImNodes->HoveredNodeIdx == node_idx &&
@@ -1936,7 +1940,7 @@ static void MiniMapUpdate()
     {
         ImVec2 target = MiniMapSpaceToGridSpace(editor, ImGui::GetMousePos());
         ImVec2 center = GImNodes->CanvasRectScreenSpace.GetSize() * 0.5f;
-        editor.Panning = ImFloor(center - target);
+        editor.Panning = ImFloor(center - target * editor.Zoom);
     }
 
     // Reset callback info after use
@@ -2058,8 +2062,20 @@ void EditorContextMoveToNode(const int node_id)
     ImNodesEditorContext& editor = EditorContextGet();
     ImNodeData&           node = ObjectPoolFindOrCreateObject(editor.Nodes, node_id);
 
-    editor.Panning.x = -node.Origin.x;
-    editor.Panning.y = -node.Origin.y;
+    editor.Panning.x = -node.Origin.x * editor.Zoom;
+    editor.Panning.y = -node.Origin.y * editor.Zoom;
+}
+
+float EditorContextGetZoom()
+{
+    const ImNodesEditorContext& editor = EditorContextGet();
+    return editor.Zoom;
+}
+
+void EditorContextResetZoom(float zoom)
+{
+    ImNodesEditorContext& editor = EditorContextGet();
+    editor.Zoom = zoom;
 }
 
 void SetImGuiContext(ImGuiContext* ctx) { ImGui::SetCurrentContext(ctx); }
@@ -2257,6 +2273,41 @@ void BeginNodeEditor()
                 ImGuiWindowFlags_NoScrollWithMouse);
         GImNodes->CanvasOriginScreenSpace = ImGui::GetCursorScreenPos();
 
+        // Apply zoom to ImGui rendering inside canvas
+        ImGui::SetWindowFontScale(editor.Zoom);
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,
+            ImGui::GetStyle().ItemSpacing * editor.Zoom);
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,
+            ImGui::GetStyle().FramePadding * editor.Zoom);
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemInnerSpacing,
+            ImGui::GetStyle().ItemInnerSpacing * editor.Zoom);
+        ImGui::PushStyleVar(ImGuiStyleVar_CellPadding,
+            ImGui::GetStyle().CellPadding * editor.Zoom);
+
+        // Apply zoom to imnodes style values so proportions are preserved
+        // Always push unconditionally so push/pop count matches even if zoom changes mid-frame
+        // Note: NodePadding is NOT scaled — ImGui content is already zoomed via SetWindowFontScale
+        ImNodes::PushStyleVar(ImNodesStyleVar_NodeCornerRounding,
+            GImNodes->Style.NodeCornerRounding * editor.Zoom);
+        ImNodes::PushStyleVar(ImNodesStyleVar_NodeBorderThickness,
+            GImNodes->Style.NodeBorderThickness * editor.Zoom);
+        ImNodes::PushStyleVar(ImNodesStyleVar_LinkThickness,
+            GImNodes->Style.LinkThickness * editor.Zoom);
+        ImNodes::PushStyleVar(ImNodesStyleVar_PinCircleRadius,
+            GImNodes->Style.PinCircleRadius * editor.Zoom);
+        ImNodes::PushStyleVar(ImNodesStyleVar_PinQuadSideLength,
+            GImNodes->Style.PinQuadSideLength * editor.Zoom);
+        ImNodes::PushStyleVar(ImNodesStyleVar_PinTriangleSideLength,
+            GImNodes->Style.PinTriangleSideLength * editor.Zoom);
+        ImNodes::PushStyleVar(ImNodesStyleVar_PinLineThickness,
+            GImNodes->Style.PinLineThickness * editor.Zoom);
+        ImNodes::PushStyleVar(ImNodesStyleVar_PinHoverRadius,
+            GImNodes->Style.PinHoverRadius * editor.Zoom);
+        ImNodes::PushStyleVar(ImNodesStyleVar_PinOffset,
+            GImNodes->Style.PinOffset * editor.Zoom);
+        ImNodes::PushStyleVar(ImNodesStyleVar_LinkHoverDistance,
+            GImNodes->Style.LinkHoverDistance * editor.Zoom);
+
         // NOTE: we have to fetch the canvas draw list *after* we call
         // BeginChild(), otherwise the ImGui UI elements are going to be
         // rendered into the parent window draw list.
@@ -2380,9 +2431,41 @@ void EndNodeEditor()
 
         else if (
             GImNodes->LeftMouseClicked || GImNodes->LeftMouseReleased ||
-            GImNodes->AltMouseClicked || GImNodes->AltMouseScrollDelta != 0.f)
+            GImNodes->AltMouseClicked)
         {
             BeginCanvasInteraction(editor);
+        }
+
+        // Handle zoom via mouse wheel
+        if (GImNodes->AltMouseScrollDelta != 0.f && MouseInCanvas())
+        {
+            const float oldZoom = editor.Zoom;
+            const float zoomStep = 0.1f;
+            editor.Zoom *= (1.0f + GImNodes->AltMouseScrollDelta * zoomStep);
+            editor.Zoom = ImClamp(editor.Zoom, 0.1f, 5.0f);
+
+            // Adjust panning to zoom toward cursor
+            const ImVec2 mouseEditor = GImNodes->MousePos - GImNodes->CanvasOriginScreenSpace;
+            editor.Panning = mouseEditor - (mouseEditor - editor.Panning) * (editor.Zoom / oldZoom);
+        }
+
+        // Reset zoom to 100% with Ctrl+Home
+        if (ImGui::IsKeyPressed(ImGuiKey_Home) && ImGui::GetIO().KeyCtrl)
+        {
+            const ImVec2 center = GImNodes->CanvasRectScreenSpace.GetCenter();
+            const ImVec2 centerEditor = center - GImNodes->CanvasOriginScreenSpace;
+            const float oldZoom = editor.Zoom;
+            editor.Zoom = 1.0f;
+            editor.Panning = centerEditor - (centerEditor - editor.Panning) * (1.0f / oldZoom);
+        }
+
+        // Reset zoom to 100% with double-click middle mouse
+        if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Middle) && MouseInCanvas())
+        {
+            const ImVec2 mouseEditor = GImNodes->MousePos - GImNodes->CanvasOriginScreenSpace;
+            const float oldZoom = editor.Zoom;
+            editor.Zoom = 1.0f;
+            editor.Panning = mouseEditor - (mouseEditor - editor.Panning) * (1.0f / oldZoom);
         }
 
         bool should_auto_pan =
@@ -2416,6 +2499,33 @@ void EndNodeEditor()
 
     // Finally, merge the draw channels
     GImNodes->CanvasDrawList->ChannelsMerge();
+
+    // Zoom indicator overlay (only when zoom != 100%)
+    if (editor.Zoom != 1.0f)
+    {
+        char zoomText[32];
+        snprintf(zoomText, sizeof(zoomText), "%d%%", (int)(editor.Zoom * 100.0f + 0.5f));
+        const ImVec2 canvasSize = GImNodes->CanvasRectScreenSpace.GetSize();
+        const ImVec2 textSize = ImGui::CalcTextSize(zoomText);
+        const ImVec2 textPos(
+            canvasSize.x - textSize.x - 12.0f,
+            canvasSize.y - textSize.y - 12.0f);
+
+        ImU32 bgColor = IM_COL32(0, 0, 0, 140);
+        GImNodes->CanvasDrawList->AddRectFilled(
+            ImVec2(textPos.x - 6, textPos.y - 4),
+            ImVec2(textPos.x + textSize.x + 6, textPos.y + textSize.y + 4),
+            bgColor, 4.0f);
+        GImNodes->CanvasDrawList->AddText(
+            textPos, IM_COL32(180, 180, 180, 200), zoomText);
+    }
+
+    // pop zoom imnodes style vars (always, to match unconditional push)
+    ImNodes::PopStyleVar(10);
+
+    // pop zoom ImGui style vars
+    ImGui::PopStyleVar(4);  // CellPadding, ItemInnerSpacing, FramePadding, ItemSpacing
+    // Note: SetWindowFontScale is per-window, resets when window ends
 
     // pop style
     ImGui::EndChild();      // end scrolling region
@@ -2504,7 +2614,7 @@ void EndNode()
     node.Rect.Expand(node.LayoutStyle.Padding);
 
     editor.GridContentBounds.Add(node.Origin);
-    editor.GridContentBounds.Add(node.Origin + node.Rect.GetSize());
+    editor.GridContentBounds.Add(node.Origin + node.Rect.GetSize() / editor.Zoom);
 
     if (node.Rect.Contains(GImNodes->MousePos))
     {
@@ -3120,7 +3230,10 @@ void NodeLineHandler(ImNodesEditorContext& editor, const char* const line)
 
 void EditorLineHandler(ImNodesEditorContext& editor, const char* const line)
 {
-    (void)sscanf(line, "panning=%f,%f", &editor.Panning.x, &editor.Panning.y);
+    if (sscanf(line, "panning=%f,%f", &editor.Panning.x, &editor.Panning.y) != 2)
+    {
+        (void)sscanf(line, "zoom=%f", &editor.Zoom);
+    }
 }
 } // namespace
 
@@ -3141,7 +3254,7 @@ const char* SaveEditorStateToIniString(
     GImNodes->TextBuffer.reserve(64 * editor.Nodes.Pool.size());
 
     GImNodes->TextBuffer.appendf(
-        "[editor]\npanning=%i,%i\n", (int)editor.Panning.x, (int)editor.Panning.y);
+        "[editor]\npanning=%i,%i\nzoom=%f\n", (int)editor.Panning.x, (int)editor.Panning.y, editor.Zoom);
 
     for (int i = 0; i < editor.Nodes.Pool.size(); i++)
     {
