@@ -1305,18 +1305,24 @@ inline ImRect GetItemRect() { return ImRect(ImGui::GetItemRectMin(), ImGui::GetI
 
 inline ImVec2 GetNodeTitleBarOrigin(const ImNodeData& node)
 {
-    return node.Origin + node.LayoutStyle.Padding;
+    // Padding is in screen space (scaled by PushStyleVar), convert to grid space
+    return node.Origin + node.LayoutStyle.Padding / EditorContextGet().Zoom;
 }
 
 inline ImVec2 GetNodeContentOrigin(const ImNodeData& node)
 {
-    const ImVec2 title_bar_height =
-        ImVec2(0.f, node.TitleBarContentRect.GetHeight() + 2.0f * node.LayoutStyle.Padding.y);
-    return node.Origin + title_bar_height + node.LayoutStyle.Padding;
+    // TitleBarContentRect.GetHeight() and Padding are both in screen space (zoomed).
+    // This function returns grid space, so divide by zoom to convert.
+    const float zoom = EditorContextGet().Zoom;
+    const float title_bar_screen_height =
+        node.TitleBarContentRect.GetHeight() + 2.0f * node.LayoutStyle.Padding.y;
+    return node.Origin + ImVec2(0.f, title_bar_screen_height / zoom) +
+        node.LayoutStyle.Padding / zoom;
 }
 
 inline ImRect GetNodeTitleRect(const ImNodeData& node)
 {
+    // Both TitleBarContentRect and Padding are in screen space — no conversion needed
     ImRect expanded_title_rect = node.TitleBarContentRect;
     expanded_title_rect.Expand(node.LayoutStyle.Padding);
 
@@ -2286,7 +2292,11 @@ void BeginNodeEditor()
 
         // Apply zoom to imnodes style values so proportions are preserved
         // Always push unconditionally so push/pop count matches even if zoom changes mid-frame
-        // Note: NodePadding is NOT scaled — ImGui content is already zoomed via SetWindowFontScale
+        // NodePadding IS scaled so that node.LayoutStyle.Padding (screen space) matches the
+        // zoomed ImGui content. Grid-space functions (GetNodeTitleBarOrigin, GetNodeContentOrigin)
+        // divide by zoom to convert back.
+        ImNodes::PushStyleVar(ImNodesStyleVar_NodePadding,
+            GImNodes->Style.NodePadding * editor.Zoom);
         ImNodes::PushStyleVar(ImNodesStyleVar_NodeCornerRounding,
             GImNodes->Style.NodeCornerRounding * editor.Zoom);
         ImNodes::PushStyleVar(ImNodesStyleVar_NodeBorderThickness,
@@ -2521,7 +2531,7 @@ void EndNodeEditor()
     }
 
     // pop zoom imnodes style vars (always, to match unconditional push)
-    ImNodes::PopStyleVar(10);
+    ImNodes::PopStyleVar(11);
 
     // pop zoom ImGui style vars
     ImGui::PopStyleVar(4);  // CellPadding, ItemInnerSpacing, FramePadding, ItemSpacing
@@ -2611,6 +2621,7 @@ void EndNode()
 
     ImNodeData& node = editor.Nodes.Pool[GImNodes->CurrentNodeIdx];
     node.Rect = GetItemRect();
+    // Padding is already in screen space (scaled by PushStyleVar), use directly
     node.Rect.Expand(node.LayoutStyle.Padding);
 
     editor.GridContentBounds.Add(node.Origin);
