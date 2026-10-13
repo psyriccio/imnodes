@@ -349,6 +349,13 @@ ImVec2 GetNodeScreenSpacePos(const int node_id);
 ImVec2 GetNodeEditorSpacePos(const int node_id);
 ImVec2 GetNodeGridSpacePos(const int node_id);
 
+// Returns the ImDrawList used by the current node editor canvas (the scrolling
+// region child of BeginNodeEditor). Valid after EndNodeEditor(); commands
+// appended there are drawn on top of the merged node/link channels, clipped to
+// the canvas region. Useful for canvas-space overlays (e.g. animated link dots)
+// that must not be covered by the scrolling region's opaque background.
+ImDrawList* GetCanvasDrawList();
+
 // If ImNodesStyleFlags_GridSnapping is enabled, snap the specified node's origin to the grid.
 void SnapNodeToGrid(int node_id);
 

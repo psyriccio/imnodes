@@ -2910,6 +2910,11 @@ ImVec2 GetNodeGridSpacePos(const int node_id)
     return node.Origin;
 }
 
+ImDrawList* GetCanvasDrawList()
+{
+    return GImNodes->CanvasDrawList;
+}
+
 void SnapNodeToGrid(int node_id)
 {
     ImNodesEditorContext& editor = EditorContextGet();
