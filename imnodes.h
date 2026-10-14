@@ -349,6 +349,11 @@ ImVec2 GetNodeScreenSpacePos(const int node_id);
 ImVec2 GetNodeEditorSpacePos(const int node_id);
 ImVec2 GetNodeGridSpacePos(const int node_id);
 
+// Returns the pin's current screen-space position — the exact anchor point
+// used when drawing links (DrawLink uses start_pin.Pos / end_pin.Pos). Use
+// after EndNodeEditor() to place per-link overlays exactly on the wire.
+ImVec2 GetPinScreenPos(const int pin_id);
+
 // Returns the ImDrawList used by the current node editor canvas (the scrolling
 // region child of BeginNodeEditor). Valid after EndNodeEditor(); commands
 // appended there are drawn on top of the merged node/link channels, clipped to

@@ -2910,6 +2910,15 @@ ImVec2 GetNodeGridSpacePos(const int node_id)
     return node.Origin;
 }
 
+ImVec2 GetPinScreenPos(const int pin_id)
+{
+    ImNodesEditorContext& editor = EditorContextGet();
+    const int             pin_idx = ObjectPoolFind(editor.Pins, pin_id);
+    IM_ASSERT(pin_idx != -1);
+    ImPinData& pin = editor.Pins.Pool[pin_idx];
+    return pin.Pos;
+}
+
 ImDrawList* GetCanvasDrawList()
 {
     return GImNodes->CanvasDrawList;
